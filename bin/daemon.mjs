@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * pimessage daemon — headless mode using pi -p
+ * pimessage daemon — headless iMessage → pi bridge
  *
- * Polls the Messages DB, passes prompts to `pi -p --no-session`, sends responses
- * back via iMessage. Self-chat safe (tracks sent messages to skip echoes).
+ * Self-chat safe: tracks sent text to skip echoes. Deletes echo rows for clean UI.
+ * Uses stdin:ignore for pi spawn (pi hangs on piped stdin).
  */
 
 import Database from "better-sqlite3";
@@ -60,7 +60,7 @@ function log(level, ...args) {
 	try { appendFileSync(LOG_FILE, line + "\n"); } catch {}
 }
 
-// ─── iMessage sending ─────────────────────────────────────────────────────────
+// ─── iMessage send + cleanup ──────────────────────────────────────────────────
 
 function sendImessage(text, recipient, maxLength = 2000) {
 	let msg = text;
@@ -73,14 +73,30 @@ function sendImessage(text, recipient, maxLength = 2000) {
 	return msg;
 }
 
-// ─── Self-chat echo tracking ──────────────────────────────────────────────────
-// When you text yourself, macOS creates TWO rows: is_from_me=1 (sent) and
-// is_from_me=0 (received echo). We track what we send so we can skip the echo.
+/**
+ * Delete a message row from chat.db and refresh Messages.app.
+ * This removes the duplicate "received" echo in self-chat.
+ */
+function deleteMessageRow(rowid) {
+	try {
+		const writeDb = new Database(DB_PATH, { fileMustExist: true });
+		writeDb.prepare("DELETE FROM message WHERE ROWID = ?").run(rowid);
+		writeDb.close();
+	} catch (e) {
+		log("debug", `Could not delete row ${rowid}: ${e.message}`);
+	}
+}
 
-const recentSent = new Set();
+// ─── Self-chat echo tracking ──────────────────────────────────────────────────
+// When you send to yourself, macOS creates:
+//   ROWID N:   is_from_me=1, text="" (the sent row — AppleScript leaves text blank)
+//   ROWID N+1: is_from_me=0, text="actual text" (the echo — this shows as grey bubble)
+// We track sent text so we can identify and delete the echo.
+
+const sentTexts = new Set();
 function trackSent(text) {
-	recentSent.add(text);
-	setTimeout(() => recentSent.delete(text), 60000);
+	sentTexts.add(text);
+	setTimeout(() => sentTexts.delete(text), 60000);
 }
 
 // ─── Pi execution ─────────────────────────────────────────────────────────────
@@ -101,7 +117,7 @@ function runPi(prompt, config) {
 		const child = spawn("pi", args, {
 			cwd: config.workingDirectory,
 			env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
-			stdio: ["pipe", "pipe", "pipe"],
+			stdio: ["ignore", "pipe", "pipe"],  // stdin MUST be 'ignore' — pi hangs on piped stdin
 		});
 
 		let stdout = "";
@@ -111,18 +127,17 @@ function runPi(prompt, config) {
 
 		const timer = setTimeout(() => {
 			child.kill("SIGTERM");
-			resolve("⏱ Timed out — try a shorter prompt.");
+			resolve("⏱ Timed out.");
 		}, config.timeout * 1000);
 
 		child.on("close", (code) => {
 			clearTimeout(timer);
-			const out = stdout.trim() || stderr.trim() || `(exit code ${code})`;
-			resolve(out);
+			resolve(stdout.trim() || stderr.trim() || `(exit code ${code})`);
 		});
 
 		child.on("error", (e) => {
 			clearTimeout(timer);
-			resolve(`❌ Error: ${e.message}`);
+			resolve(`Error: ${e.message}`);
 		});
 	});
 }
@@ -146,9 +161,7 @@ export default async function startDaemon() {
 	console.log(`  Senders: ${config.allowedSenders.join(", ")}`);
 	console.log(`  Trigger: ${config.trigger ? `"${config.trigger}"` : "(any message)"}`);
 	console.log(`  CWD:     ${config.workingDirectory}`);
-	console.log(`  Timeout: ${config.timeout}s`);
-	console.log(`  Poll:    ${config.pollInterval}ms`);
-	console.log(`  Log:     ${LOG_FILE}\n`);
+	console.log(`  Timeout: ${config.timeout}s\n`);
 
 	let db;
 	try {
@@ -170,13 +183,11 @@ export default async function startDaemon() {
 	console.log("🟢 Listening…\n");
 
 	let running = true;
-	let busy = false;
 	process.on("SIGINT", () => { console.log("\n👋 Shutting down…"); running = false; });
 	process.on("SIGTERM", () => { running = false; });
 
 	const stmt = db.prepare(`
-		SELECT m.ROWID as rowid, m.text, m.is_from_me, h.id as handle,
-			datetime(m.date / 1000000000 + 978307200, 'unixepoch', 'localtime') as ts
+		SELECT m.ROWID as rowid, m.text, m.is_from_me, h.id as handle
 		FROM message m
 		LEFT JOIN handle h ON m.handle_id = h.ROWID
 		WHERE m.ROWID > ?
@@ -189,21 +200,23 @@ export default async function startDaemon() {
 		try {
 			const messages = stmt.all(state.lastRowId);
 
-			// Collect valid incoming prompts, advance state for all
 			const pending = [];
 			for (const msg of messages) {
 				state.lastRowId = msg.rowid;
 				saveState(state);
 
+				// Skip sent copies (is_from_me=1)
 				if (msg.is_from_me) continue;
-				if (!msg.handle) continue;
 
-				// Skip echoes of our own sent messages
-				if (recentSent.has(msg.text)) {
-					recentSent.delete(msg.text);
+				// Skip + delete echoes of messages WE sent via AppleScript
+				if (sentTexts.has(msg.text)) {
+					sentTexts.delete(msg.text);
+					deleteMessageRow(msg.rowid);
+					log("debug", `Deleted echo row ${msg.rowid}: ${msg.text.slice(0, 30)}`);
 					continue;
 				}
 
+				if (!msg.handle) continue;
 				if (!config.allowedSenders.some((s) => s === msg.handle || s === "*")) continue;
 
 				let prompt = msg.text;
@@ -213,50 +226,47 @@ export default async function startDaemon() {
 				}
 				if (!prompt) continue;
 
-				pending.push({ handle: msg.handle, prompt });
+				pending.push({ handle: msg.handle, prompt, rowid: msg.rowid });
 			}
 
-			// Skip if already processing or nothing to do
-			if (pending.length === 0 || busy) {
+			if (pending.length === 0) {
 				await sleep(config.pollInterval);
 				continue;
 			}
 
-			busy = true;
 			const handle = pending[0].handle;
-
-			// Batch multiple rapid-fire messages into one prompt
 			const prompt = pending.length === 1
 				? pending[0].prompt
 				: pending.map((p) => p.prompt).join("\n");
 
-			if (pending.length > 1) {
-				log("info", `📥 ${handle}: batched ${pending.length} messages`);
-			}
 			log("info", `📥 ${handle}: ${prompt.slice(0, 100)}${prompt.length > 100 ? "…" : ""}`);
 
-			// Ack
-			try {
-				const ack = sendImessage("⏳ Processing…", handle, config.maxResponseLength);
-				trackSent(ack);
-			} catch {}
+			// Also delete the is_from_me=0 echo of the user's own message
+			// so the conversation shows: [user blue bubble] → [response blue bubble]
+			// Skip the first one (that's the one we're processing), delete duplicates
+			if (pending.length === 1) {
+				// For self-chat: the user's message has both is_from_me=1 (already skipped)
+				// and is_from_me=0 (which we process). We keep the is_from_me=0 as it shows
+				// as a grey bubble from "them". This is fine — it's the prompt.
+			}
 
 			// Run pi
 			const response = await runPi(prompt, config);
-			log("info", `✅ Response: ${response.length} chars`);
+			log("info", `✅ ${response.length} chars`);
 
-			// Send response
+			// Send response + track for echo deletion
 			try {
 				const sent = sendImessage(response, handle, config.maxResponseLength);
 				trackSent(sent);
+				log("info", `📤 Sent to ${handle}`);
 			} catch (e) {
-				log("error", `Failed to send: ${e.message}`);
+				log("error", `Send failed: ${e.message}`);
 			}
 
-			busy = false;
+			// Wait for DB to flush sent+echo rows before next poll
+			await sleep(1500);
 		} catch (e) {
 			log("error", `Poll error: ${e.message}`);
-			busy = false;
 		}
 
 		await sleep(config.pollInterval);
@@ -270,7 +280,6 @@ function sleep(ms) {
 	return new Promise((r) => setTimeout(r, ms));
 }
 
-// Auto-run when executed directly
 if (process.argv[1]?.includes("daemon")) {
 	startDaemon().catch((e) => {
 		console.error("Fatal:", e);

@@ -57,14 +57,6 @@ export default function (pi: ExtensionAPI) {
 				}
 				if (!prompt) return;
 
-				// Send acknowledgment (track it so the self-chat echo is skipped)
-				try {
-					const ack = sendMessage("⏳ Processing…", msg.handle, config.maxResponseLength);
-					bridge!.trackSent(ack);
-				} catch {
-					/* best effort */
-				}
-
 				// Forward to the active pi session as a user message
 				pi.sendUserMessage(prompt, { deliverAs: "followUp" });
 
