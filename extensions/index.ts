@@ -57,9 +57,10 @@ export default function (pi: ExtensionAPI) {
 				}
 				if (!prompt) return;
 
-				// Send acknowledgment
+				// Send acknowledgment (track it so the self-chat echo is skipped)
 				try {
-					sendMessage("⏳ Processing…", msg.handle, config.maxResponseLength);
+					const ack = sendMessage("⏳ Processing…", msg.handle, config.maxResponseLength);
+					bridge!.trackSent(ack);
 				} catch {
 					/* best effort */
 				}
@@ -99,12 +100,14 @@ export default function (pi: ExtensionAPI) {
 
 				const response = await responseListener;
 
-				// Send response back via iMessage
+				// Send response back via iMessage (track to skip self-chat echo)
 				try {
-					sendMessage(response, msg.handle, config.maxResponseLength);
+					const sent = sendMessage(response, msg.handle, config.maxResponseLength);
+					bridge!.trackSent(sent);
 				} catch (e: any) {
 					try {
-						sendMessage(`❌ Failed to send response: ${e.message}`, msg.handle, config.maxResponseLength);
+						const errMsg = sendMessage(`❌ Failed to send response: ${e.message}`, msg.handle, config.maxResponseLength);
+						bridge!.trackSent(errMsg);
 					} catch {
 						/* give up */
 					}

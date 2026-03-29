@@ -77,7 +77,10 @@ export function getMaxRowId(db: Database.Database): number {
 /**
  * Send an iMessage via AppleScript.
  */
-export function sendMessage(text: string, recipient: string, maxLength: number = 2000): void {
+/**
+ * Send an iMessage via AppleScript. Returns the actual text sent (may be truncated).
+ */
+export function sendMessage(text: string, recipient: string, maxLength: number = 2000): string {
 	let msg = text;
 	if (msg.length > maxLength) {
 		msg = msg.slice(0, maxLength - 20) + "\n\n… (truncated)";
@@ -111,6 +114,7 @@ export function sendMessage(text: string, recipient: string, maxLength: number =
 			throw new Error(`Failed to send iMessage to ${recipient}: ${e.message}`);
 		}
 	}
+	return msg;
 }
 
 /**
@@ -130,6 +134,8 @@ export class MessageBridge {
 	private running = false;
 	private config: PimessageConfig;
 	private handler: MessageHandler;
+	/** Track recently sent messages to avoid processing our own replies (self-chat creates is_from_me=0 copies) */
+	private recentSent: Set<string> = new Set();
 
 	constructor(config: PimessageConfig, handler: MessageHandler) {
 		this.config = config;
@@ -142,6 +148,13 @@ export class MessageBridge {
 			this.state.lastRowId = getMaxRowId(this.db);
 			saveState(this.state);
 		}
+	}
+
+	/** Mark a message as sent by us so the self-chat echo gets skipped */
+	trackSent(text: string): void {
+		this.recentSent.add(text);
+		// Clean up after 60s to avoid memory leak
+		setTimeout(() => this.recentSent.delete(text), 60000);
 	}
 
 	async start(): Promise<void> {
@@ -181,8 +194,14 @@ export class MessageBridge {
 			this.state.lastRowId = msg.rowid;
 			saveState(this.state);
 
-			// Skip our own messages
+			// Skip our own messages (sent copy)
 			if (msg.isFromMe) continue;
+
+			// Skip echo copies of messages we sent via AppleScript (self-chat creates is_from_me=0 duplicates)
+			if (this.recentSent.has(msg.text)) {
+				this.recentSent.delete(msg.text);
+				continue;
+			}
 
 			// Check sender allowlist
 			if (!msg.handle || !isAllowedSender(msg.handle, this.config.allowedSenders)) continue;

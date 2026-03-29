@@ -159,6 +159,14 @@ export default async function startDaemon() {
 
 	console.log("🟢 Listening…\n");
 
+	// Track messages we send to avoid processing self-chat echoes
+	// (texting yourself creates is_from_me=0 copies of sent messages)
+	const recentSent = new Set();
+	function trackSent(text) {
+		recentSent.add(text);
+		setTimeout(() => recentSent.delete(text), 60000);
+	}
+
 	let running = true;
 	process.on("SIGINT", () => {
 		console.log("\n👋 Shutting down…");
@@ -189,6 +197,13 @@ export default async function startDaemon() {
 
 				if (msg.is_from_me) continue;
 				if (!msg.handle) continue;
+
+				// Skip echoes of messages we sent (self-chat creates is_from_me=0 copies)
+				if (recentSent.has(msg.text)) {
+					recentSent.delete(msg.text);
+					continue;
+				}
+
 				if (!config.allowedSenders.some((s) => s === msg.handle || s === "*")) continue;
 
 				let prompt = msg.text;
@@ -202,13 +217,20 @@ export default async function startDaemon() {
 
 				try {
 					sendImessage("⏳ Processing…", msg.handle, config.maxResponseLength);
+					trackSent("⏳ Processing…");
 				} catch {}
 
 				const response = await runPi(prompt, config);
 				log("info", `✅ Response: ${response.length} chars`);
 
 				try {
+					// Truncate same way sendImessage does, then track
+					let sentText = response;
+					if (sentText.length > config.maxResponseLength) {
+						sentText = sentText.slice(0, config.maxResponseLength - 20) + "\n\n… (truncated)";
+					}
 					sendImessage(response, msg.handle, config.maxResponseLength);
+					trackSent(sentText);
 				} catch (e) {
 					log("error", `Failed to send: ${e.message}`);
 				}
