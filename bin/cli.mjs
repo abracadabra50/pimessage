@@ -269,9 +269,9 @@ Standalone daemon (headless, uses pi -p):
 
 Pi extension (in-session, interactive):
   pi -e pimessage             Load as extension
-  /imessage:allow <handle>    Allow a sender
-  /imessage:start             Start bridge
-  /imessage                   Show status
+  /pimessage:allow <handle>   Allow a sender
+  /pimessage:start            Start bridge
+  /pimessage                  Show status
 
 Management:
   pimessage allow <handle>    Add allowed sender (+phone or email)
@@ -286,7 +286,7 @@ Setup:
   2. pimessage allow +1234567890
   3. pimessage                    # standalone daemon
      OR
-     pi -e pimessage              # as pi extension, then /imessage:start
+     pi -e pimessage              # as pi extension, then /pimessage:start
 `);
 		break;
 	}

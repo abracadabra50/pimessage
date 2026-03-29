@@ -5,13 +5,13 @@
  * as prompts to the active pi session. Responses are sent back via iMessage.
  *
  * Commands:
- *   /imessage              — Show status and config
- *   /imessage:allow        — Add an allowed sender
- *   /imessage:deny         — Remove an allowed sender
- *   /imessage:start        — Start the bridge
- *   /imessage:stop         — Stop the bridge
- *   /imessage:set          — Set a config value
- *   /imessage:test         — Send a test message
+ *   /pimessage              — Show status and config
+ *   /pimessage:allow        — Add an allowed sender
+ *   /pimessage:deny         — Remove an allowed sender
+ *   /pimessage:start        — Start the bridge
+ *   /pimessage:stop         — Stop the bridge
+ *   /pimessage:set          — Set a config value
+ *   /pimessage:test         — Send a test message
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -42,7 +42,7 @@ export default function (pi: ExtensionAPI) {
 	function startBridge(ctx: any): string {
 		if (bridge?.isRunning) return "Bridge is already running.";
 		if (config.allowedSenders.length === 0) {
-			return "No allowed senders. Run /imessage:allow <phone-or-email> first.";
+			return "No allowed senders. Run /pimessage:allow <phone-or-email> first.";
 		}
 
 		try {
@@ -133,8 +133,8 @@ export default function (pi: ExtensionAPI) {
 
 	// ─── Commands ─────────────────────────────────────────────────────────────
 
-	// /imessage — status
-	pi.registerCommand("imessage", {
+	// /pimessage — status
+	pi.registerCommand("pimessage", {
 		description: "Show iMessage bridge status",
 		handler: async (_args, ctx) => {
 			config = loadConfig();
@@ -147,21 +147,21 @@ export default function (pi: ExtensionAPI) {
 				`  Timeout:  ${config.timeout}s`,
 				`  Max len:  ${config.maxResponseLength} chars`,
 				``,
-				`  /imessage:allow <handle>  — add sender`,
-				`  /imessage:start           — start bridge`,
-				`  /imessage:stop            — stop bridge`,
+				`  /pimessage:allow <handle>  — add sender`,
+				`  /pimessage:start           — start bridge`,
+				`  /pimessage:stop            — stop bridge`,
 			];
 			ctx.ui.notify(lines.join("\n"), "info");
 		},
 	});
 
-	// /imessage:allow — add sender
-	pi.registerCommand("imessage:allow", {
+	// /pimessage:allow — add sender
+	pi.registerCommand("pimessage:allow", {
 		description: "Allow an iMessage sender (phone or email)",
 		handler: async (args, ctx) => {
 			const handle = args?.trim();
 			if (!handle) {
-				ctx.ui.notify("Usage: /imessage:allow +447123456789 or /imessage:allow me@icloud.com", "error");
+				ctx.ui.notify("Usage: /pimessage:allow +447123456789 or /pimessage:allow me@icloud.com", "error");
 				return;
 			}
 			config = loadConfig();
@@ -173,13 +173,13 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// /imessage:deny — remove sender
-	pi.registerCommand("imessage:deny", {
+	// /pimessage:deny — remove sender
+	pi.registerCommand("pimessage:deny", {
 		description: "Remove an iMessage sender from the allowlist",
 		handler: async (args, ctx) => {
 			const handle = args?.trim();
 			if (!handle) {
-				ctx.ui.notify("Usage: /imessage:deny +447123456789", "error");
+				ctx.ui.notify("Usage: /pimessage:deny +447123456789", "error");
 				return;
 			}
 			config = loadConfig();
@@ -189,8 +189,8 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// /imessage:start — start bridge
-	pi.registerCommand("imessage:start", {
+	// /pimessage:start — start bridge
+	pi.registerCommand("pimessage:start", {
 		description: "Start the iMessage bridge",
 		handler: async (_args, ctx) => {
 			config = loadConfig();
@@ -199,8 +199,8 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// /imessage:stop — stop bridge
-	pi.registerCommand("imessage:stop", {
+	// /pimessage:stop — stop bridge
+	pi.registerCommand("pimessage:stop", {
 		description: "Stop the iMessage bridge",
 		handler: async (_args, ctx) => {
 			const result = stopBridge(ctx);
@@ -208,8 +208,8 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// /imessage:set — set config value
-	pi.registerCommand("imessage:set", {
+	// /pimessage:set — set config value
+	pi.registerCommand("pimessage:set", {
 		description: "Set a pimessage config value (e.g. trigger, timeout, maxResponseLength)",
 		handler: async (args, ctx) => {
 			const parts = args?.trim().split(/\s+/) ?? [];
@@ -219,11 +219,11 @@ export default function (pi: ExtensionAPI) {
 			if (!key || !value) {
 				ctx.ui.notify(
 					[
-						"Usage: /imessage:set <key> <value>",
+						"Usage: /pimessage:set <key> <value>",
 						"",
 						"Keys: trigger, timeout, maxResponseLength, pollInterval, logLevel",
-						'Example: /imessage:set trigger "/ask "',
-						"Example: /imessage:set timeout 600",
+						'Example: /pimessage:set trigger "/ask "',
+						"Example: /pimessage:set timeout 600",
 					].join("\n"),
 					"info",
 				);
@@ -247,13 +247,13 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// /imessage:test — send a test message
-	pi.registerCommand("imessage:test", {
+	// /pimessage:test — send a test message
+	pi.registerCommand("pimessage:test", {
 		description: "Send a test iMessage",
 		handler: async (args, ctx) => {
 			const recipient = args?.trim();
 			if (!recipient) {
-				ctx.ui.notify("Usage: /imessage:test +447123456789", "error");
+				ctx.ui.notify("Usage: /pimessage:test +447123456789", "error");
 				return;
 			}
 			try {
@@ -265,8 +265,8 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// /imessage:reset — reset message pointer
-	pi.registerCommand("imessage:reset", {
+	// /pimessage:reset — reset message pointer
+	pi.registerCommand("pimessage:reset", {
 		description: "Reset message pointer to skip all existing messages",
 		handler: async (_args, ctx) => {
 			try {
