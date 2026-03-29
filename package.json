@@ -1,0 +1,25 @@
+{
+  "name": "pimessage",
+  "version": "0.1.0",
+  "description": "Control pi coding agent via iMessage — as a pi extension or standalone daemon",
+  "keywords": ["pi-package"],
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "pimessage": "./bin/cli.mjs"
+  },
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
+    "@sinclair/typebox": "*"
+  }
+}
