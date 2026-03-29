@@ -245,3 +245,12 @@ export default async function startDaemon() {
 	db.close();
 	console.log("✅ Stopped.");
 }
+
+// Auto-run when executed directly
+const isDirectRun = process.argv[1]?.includes("daemon");
+if (isDirectRun) {
+	startDaemon().catch((e) => {
+		console.error("Fatal:", e);
+		process.exit(1);
+	});
+}
