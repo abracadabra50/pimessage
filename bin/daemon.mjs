@@ -191,6 +191,8 @@ export default async function startDaemon() {
 		try {
 			const messages = stmt.all(state.lastRowId);
 
+			// Collect valid incoming messages, deduplicating and advancing state
+			const pending = [];
 			for (const msg of messages) {
 				state.lastRowId = msg.rowid;
 				saveState(state);
@@ -213,10 +215,25 @@ export default async function startDaemon() {
 				}
 				if (!prompt) continue;
 
-				log("info", `📥 ${msg.handle}: ${prompt.slice(0, 80)}${prompt.length > 80 ? "…" : ""}`);
+				pending.push({ handle: msg.handle, prompt });
+			}
+
+			// If multiple messages arrived, batch them into one prompt
+			if (pending.length > 0) {
+				const handle = pending[0].handle;
+				let prompt;
+				if (pending.length === 1) {
+					prompt = pending[0].prompt;
+				} else {
+					// Combine multiple messages into one (user probably typed fast)
+					prompt = pending.map((p) => p.prompt).join("\n");
+					log("info", `📥 ${handle}: batched ${pending.length} messages`);
+				}
+
+				log("info", `📥 ${handle}: ${prompt.slice(0, 80)}${prompt.length > 80 ? "…" : ""}`);
 
 				try {
-					sendImessage("⏳ Processing…", msg.handle, config.maxResponseLength);
+					sendImessage("⏳ Processing…", handle, config.maxResponseLength);
 					trackSent("⏳ Processing…");
 				} catch {}
 
@@ -224,12 +241,11 @@ export default async function startDaemon() {
 				log("info", `✅ Response: ${response.length} chars`);
 
 				try {
-					// Truncate same way sendImessage does, then track
 					let sentText = response;
 					if (sentText.length > config.maxResponseLength) {
 						sentText = sentText.slice(0, config.maxResponseLength - 20) + "\n\n… (truncated)";
 					}
-					sendImessage(response, msg.handle, config.maxResponseLength);
+					sendImessage(response, handle, config.maxResponseLength);
 					trackSent(sentText);
 				} catch (e) {
 					log("error", `Failed to send: ${e.message}`);
