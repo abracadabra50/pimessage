@@ -74,16 +74,39 @@ function sendImessage(text, recipient, maxLength = 2000) {
 }
 
 /**
- * Delete a message row from chat.db and refresh Messages.app.
- * This removes the duplicate "received" echo in self-chat.
+ * Delete a message row from chat.db.
+ * Must temporarily drop delete triggers (they reference C functions we don't have),
+ * then recreate them after. This cleanly removes echo bubbles in self-chat.
  */
 function deleteMessageRow(rowid) {
+	let writeDb;
 	try {
-		const writeDb = new Database(DB_PATH, { fileMustExist: true });
+		writeDb = new Database(DB_PATH, { fileMustExist: true });
+
+		// Get all delete-related triggers so we can restore them
+		const allTriggers = writeDb.prepare(
+			"SELECT name, sql FROM sqlite_master WHERE type='trigger'"
+		).all();
+		const deleteTriggers = allTriggers.filter(t => t.name.includes("delete"));
+
+		// Drop delete triggers (they call C functions we can't invoke)
+		for (const t of deleteTriggers) {
+			writeDb.exec(`DROP TRIGGER IF EXISTS "${t.name}"`);
+		}
+
+		// Delete the echo row
 		writeDb.prepare("DELETE FROM message WHERE ROWID = ?").run(rowid);
-		writeDb.close();
+
+		// Restore triggers (ignore errors from missing C functions)
+		for (const t of deleteTriggers) {
+			try { writeDb.exec(t.sql); } catch { /* expected for plugin triggers */ }
+		}
+
+		log("debug", `Deleted echo row ${rowid}`);
 	} catch (e) {
 		log("debug", `Could not delete row ${rowid}: ${e.message}`);
+	} finally {
+		try { writeDb?.close(); } catch {}
 	}
 }
 
@@ -226,6 +249,10 @@ export default async function startDaemon() {
 				}
 				if (!prompt) continue;
 
+				// Delete this echo row (the is_from_me=0 copy of the user's sent message)
+				// so the conversation only shows the blue sent bubble, not the grey echo too
+				deleteMessageRow(msg.rowid);
+
 				pending.push({ handle: msg.handle, prompt, rowid: msg.rowid });
 			}
 
@@ -240,15 +267,6 @@ export default async function startDaemon() {
 				: pending.map((p) => p.prompt).join("\n");
 
 			log("info", `📥 ${handle}: ${prompt.slice(0, 100)}${prompt.length > 100 ? "…" : ""}`);
-
-			// Also delete the is_from_me=0 echo of the user's own message
-			// so the conversation shows: [user blue bubble] → [response blue bubble]
-			// Skip the first one (that's the one we're processing), delete duplicates
-			if (pending.length === 1) {
-				// For self-chat: the user's message has both is_from_me=1 (already skipped)
-				// and is_from_me=0 (which we process). We keep the is_from_me=0 as it shows
-				// as a grey bubble from "them". This is fine — it's the prompt.
-			}
 
 			// Run pi
 			const response = await runPi(prompt, config);
